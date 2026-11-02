@@ -67,15 +67,21 @@ Stored in `%APPDATA%\CaptureCompressor\settings.json`; the log is
 | Setting | Default | Notes |
 |---|---|---|
 | Watch folder | `%USERPROFILE%\Videos\Captures` | not recursive |
-| Encoder | GPU `hevc_nvenc` | alternatives: CPU `libx265`, CPU `libx264` |
-| Quality | 28 | CQ for NVENC, CRF for x264/x265; lower = better quality, bigger files |
+| Encoder | CPU `libx264` (H.264) | alternatives: CPU `libx265`, GPU `hevc_nvenc` (both HEVC) |
+| Quality | 23 | CRF for x264/x265, CQ for NVENC; lower = better quality, bigger files |
 | ffmpeg location | empty (PATH) | path to `ffmpeg.exe` or its folder; `ffprobe.exe` must be next to it |
 | Delete originals permanently | off | off = Recycle Bin |
 | Start with Windows | on | |
 
 The chosen encoder is tested with a one-second encode at startup. If it doesn't work
 (for example an NVIDIA driver that is too old for your ffmpeg build), the app shows a
-notification and uses `libx265` on the CPU instead.
+notification and uses `libx264` on the CPU instead.
+
+**Why H.264 by default?** H.264 files play everywhere: Windows' own player, browsers,
+Discord, Telegram. HEVC (`libx265`, `hevc_nvenc`) gives roughly 30-50% smaller files,
+but Windows' player and some other apps need the paid *HEVC Video Extensions* from the
+Microsoft Store to open them (VLC plays HEVC without extra codecs). If HEVC suits you,
+pick it in Settings; quality around 28 is a good starting point for HEVC.
 
 > **NVENC and older GPUs:** ffmpeg 8.1+/9.x builds need NVIDIA driver 610 or newer for
 > NVENC. GTX 10xx / TITAN Xp (Pascal) cards don't get those drivers, so with a current

@@ -14,15 +14,16 @@ VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm"}
 IGNORED_NAME_PREFIXES = ("~", ".")
 
 ENCODER_DESCRIPTIONS = {
-    "hevc_nvenc": "GPU - NVIDIA HEVC (hevc_nvenc)",
-    "libx265": "CPU - HEVC (libx265)",
-    "libx264": "CPU - H.264 (libx264)",
+    "libx264": "CPU - H.264 (libx264), plays everywhere",
+    "libx265": "CPU - HEVC (libx265), smaller, needs HEVC codec",
+    "hevc_nvenc": "GPU - NVIDIA HEVC (hevc_nvenc), needs HEVC codec",
 }
 HEVC_ENCODERS = {"hevc_nvenc", "libx265"}
-DEFAULT_ENCODER = "hevc_nvenc"
-FALLBACK_ENCODER = "libx265"
+# H.264 by default: Windows' own player needs a paid extension to open HEVC files.
+DEFAULT_ENCODER = "libx264"
+FALLBACK_ENCODER = "libx264"
 
-DEFAULT_QUALITY = 28  # CRF / CQ: lower means better quality and bigger files
+DEFAULT_QUALITY = 23  # CRF / CQ: lower means better quality and bigger files; x264's own default
 LOWEST_QUALITY_VALUE = 0
 HIGHEST_QUALITY_VALUE = 51
 

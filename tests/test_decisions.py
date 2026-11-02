@@ -65,6 +65,17 @@ def test_fail_when_output_cannot_be_read():
     assert decisions.verify_compression(1000, 10, None, 10.0).action == "failed"
 
 
+def test_default_and_fallback_encoder_is_h264_which_plays_without_extra_codecs():
+    assert decisions.DEFAULT_ENCODER == "libx264"
+    assert decisions.FALLBACK_ENCODER == "libx264"
+    assert decisions.DEFAULT_ENCODER not in decisions.HEVC_ENCODERS
+    assert decisions.DEFAULT_ENCODER in decisions.ENCODER_DESCRIPTIONS
+
+
+def test_default_quality_is_within_range():
+    assert decisions.clamp_quality(decisions.DEFAULT_QUALITY) == decisions.DEFAULT_QUALITY
+
+
 def test_ffmpeg_arguments_for_gpu():
     arguments = decisions.build_ffmpeg_arguments("ffmpeg", Path("in.mp4"), Path("out.mp4"), "hevc_nvenc", 30)
     assert arguments[arguments.index("-c:v") + 1] == "hevc_nvenc"
