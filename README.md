@@ -110,7 +110,19 @@ Code layout (`capture_compressor/`):
 Set `CAPTURE_COMPRESSOR_HOME` to a temporary folder to keep test runs away from your
 real settings.
 
-A one-file exe with PyInstaller is planned but not set up yet.
+## Build a standalone exe
+
+```bash
+.venv\Scripts\python -m pip install pyinstaller
+.venv\Scripts\python build_executable.py
+```
+
+This creates `dist\CaptureCompressor.exe` (about 20 MB), a single file that runs
+without Python. ffmpeg is not included: it still has to be on `PATH` or set in
+Settings. When started from the exe, *Start with Windows* points to the exe itself.
+
+The exe is not code-signed, so Windows SmartScreen may warn about an unknown
+publisher on first start.
 
 ## License
 

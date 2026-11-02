@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pyinstaller"]
 
 [project.gui-scripts]
 capture-compressor = "capture_compressor.__main__:main"
