@@ -92,10 +92,23 @@ on every start (a changed file is tried again).
 .venv\Scripts\python -m pytest
 ```
 
-The pure logic (output naming, skip rules, ffmpeg arguments, verification decision)
-lives in `capture_compressor/logic.py` and is covered by `tests/`. Set
-`CAPTURE_COMPRESSOR_HOME` to a temporary folder to keep test runs away from your real
-settings.
+Code layout (`capture_compressor/`):
+
+| Module | Responsibility |
+|---|---|
+| `decisions.py` | pure rules: output naming, which files to handle, ffmpeg arguments, verification |
+| `engine.py` | background worker that ties everything together |
+| `folder_watcher.py` | reports new and changed files in the watch folder |
+| `recording_queue.py` | waiting recordings; detects when one is finished |
+| `compression_job.py` | encode, verify and replace one recording |
+| `ffmpeg_tools.py` | finding and running ffmpeg / ffprobe |
+| `file_operations.py` | "is another program using this file?", Recycle Bin / delete |
+| `settings.py`, `skip_list.py`, `logging_setup.py` | files in `%APPDATA%\CaptureCompressor` |
+| `tray.py`, `tray_icon_image.py`, `settings_window.py` | user interface |
+| `autostart.py`, `single_instance.py` | Windows integration |
+
+Set `CAPTURE_COMPRESSOR_HOME` to a temporary folder to keep test runs away from your
+real settings.
 
 A one-file exe with PyInstaller is planned but not set up yet.
 

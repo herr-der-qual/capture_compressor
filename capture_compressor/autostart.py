@@ -1,4 +1,4 @@
-"""Start with Windows via the per-user Run key (no admin rights needed)."""
+"""Start with Windows via the per-user Run registry key (no administrator rights needed)."""
 
 from __future__ import annotations
 
@@ -9,41 +9,44 @@ from pathlib import Path
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 VALUE_NAME = "CaptureCompressor"
-log = logging.getLogger(__name__)
+LAUNCHER_FILE_NAME = "capture_compressor.pyw"
+
+logger = logging.getLogger(__name__)
 
 
-def command() -> str:
+def startup_command() -> str:
     """The command line Windows should run at logon."""
-    if getattr(sys, "frozen", False):  # PyInstaller exe
+    if getattr(sys, "frozen", False):  # PyInstaller executable
         return f'"{sys.executable}"'
-    exe = Path(sys.executable)
-    pythonw = exe.with_name("pythonw.exe")
-    launcher = Path(__file__).resolve().parent.parent / "capture_compressor.pyw"
-    return f'"{pythonw if pythonw.exists() else exe}" "{launcher}"'
+    python = Path(sys.executable)
+    windowless_python = python.with_name("pythonw.exe")
+    launcher = Path(__file__).resolve().parent.parent / LAUNCHER_FILE_NAME
+    interpreter = windowless_python if windowless_python.exists() else python
+    return f'"{interpreter}" "{launcher}"'
 
 
-def current(value_name: str = VALUE_NAME) -> str | None:
+def registered_command(value_name: str = VALUE_NAME) -> str | None:
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
-            return winreg.QueryValueEx(key, value_name)[0]
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as run_key:
+            return winreg.QueryValueEx(run_key, value_name)[0]
     except FileNotFoundError:
         return None
 
 
 def set_enabled(enabled: bool, value_name: str = VALUE_NAME) -> None:
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as run_key:
         if enabled:
-            winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, command())
-        else:
-            try:
-                winreg.DeleteValue(key, value_name)
-            except FileNotFoundError:
-                pass
+            winreg.SetValueEx(run_key, value_name, 0, winreg.REG_SZ, startup_command())
+            return
+        try:
+            winreg.DeleteValue(run_key, value_name)
+        except FileNotFoundError:
+            pass
 
 
-def sync(enabled: bool) -> None:
-    """Make the registry match the setting (also fixes a moved checkout)."""
-    want = command() if enabled else None
-    if current() != want:
+def synchronize(enabled: bool) -> None:
+    """Make the registry match the setting (this also fixes a moved checkout)."""
+    wanted_command = startup_command() if enabled else None
+    if registered_command() != wanted_command:
         set_enabled(enabled)
-        log.info("Start with Windows %s", "enabled" if enabled else "disabled")
+        logger.info("Start with Windows %s", "enabled" if enabled else "disabled")

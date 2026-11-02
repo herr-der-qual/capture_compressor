@@ -1,7 +1,7 @@
 """Tray icon and the glue between pystray, tkinter and the engine.
 
 tkinter owns the main thread; pystray runs its own message loop in a second
-thread. Menu clicks are handed to the tk thread through a queue.
+thread. Menu clicks are handed over to the tkinter thread through a queue.
 """
 
 from __future__ import annotations
@@ -11,163 +11,165 @@ import logging
 import os
 import queue
 import threading
-import tkinter as tk
+import tkinter
 from tkinter import messagebox
+from typing import Callable
 
 import pystray
-from PIL import Image, ImageDraw, ImageTk
+from PIL import ImageTk
 
-from . import autostart
-from .config import Settings, app_dir
-from .engine import Engine, Status
+from . import autostart, single_instance, status
+from .engine import CompressionEngine
+from .logging_setup import log_file_path
+from .settings import Settings
 from .settings_window import SettingsWindow
+from .status import Status
+from .tray_icon_image import draw_tray_icon
 
-log = logging.getLogger(__name__)
-APP_TITLE = "Capture Compressor"
-COLORS = {
-    "idle": (34, 160, 90),
-    "compressing": (230, 140, 20),
-    "paused": (130, 130, 130),
-    "error": (210, 50, 50),
-}
+logger = logging.getLogger(__name__)
 
-
-def make_icon(state: str) -> Image.Image:
-    """A colored disc with a white 'shrink' arrow; color shows the state."""
-    size = 64
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    d.ellipse((2, 2, size - 2, size - 2), fill=COLORS.get(state, COLORS["idle"]) + (255,))
-    white = (255, 255, 255, 255)
-    d.rectangle((26, 12, 38, 30), fill=white)              # arrow shaft
-    d.polygon([(16, 30), (48, 30), (32, 46)], fill=white)  # arrow head
-    d.rectangle((16, 49, 48, 54), fill=white)              # "floor"
-    return img
+APPLICATION_TITLE = "Capture Compressor"
+MAXIMUM_TOOLTIP_LENGTH = 127
+MAXIMUM_NOTIFICATION_LENGTH = 250
+MAXIMUM_MENU_STATUS_LENGTH = 60
+QUEUE_CHECK_MILLISECONDS = 100
+PROCESS_DPI_AWARE = 1
 
 
-def _already_running() -> bool:
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateMutexW(None, False, "Local\\CaptureCompressorSingleInstance")
-    return ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
-
-
-class TrayApp:
+class TrayApplication:
     def __init__(self, settings: Settings, first_run: bool) -> None:
         self.settings = settings
         self.first_run = first_run
-        self.calls: queue.Queue = queue.Queue()
-        self.root = tk.Tk()
+        self.interface_calls: queue.Queue[Callable[[], None]] = queue.Queue()
+        self.root = tkinter.Tk()
         self.root.withdraw()
-        self._window_icon = ImageTk.PhotoImage(make_icon("idle"))
+        self._window_icon = ImageTk.PhotoImage(draw_tray_icon(status.IDLE))
         self.root.iconphoto(True, self._window_icon)  # also used by the Settings window
         self.settings_window: SettingsWindow | None = None
-        self.engine = Engine(settings, on_status=self._on_status, on_notify=self._notify)
+        self.engine = CompressionEngine(
+            settings, on_status_change=self._show_status, notify=self._notify
+        )
         self.icon = pystray.Icon(
             "CaptureCompressor",
-            make_icon("idle"),
-            f"{APP_TITLE} - starting",
-            menu=pystray.Menu(
-                pystray.MenuItem(lambda item: self.engine.status.text()[:60], None, enabled=False),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Settings...", self._ui(self.open_settings), default=True),
-                pystray.MenuItem(
-                    lambda item: "Resume" if self.engine.paused else "Pause",
-                    lambda: self.engine.set_paused(not self.engine.paused),
-                ),
-                pystray.MenuItem("Open folder", lambda: _open(self.settings.watch_folder)),
-                pystray.MenuItem("Open log", lambda: _open(str(app_dir() / "capture_compressor.log"))),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Exit", self._ui(self.exit)),
+            draw_tray_icon(status.IDLE),
+            f"{APPLICATION_TITLE} - starting",
+            menu=self._build_menu(),
+        )
+
+    def _build_menu(self) -> pystray.Menu:
+        return pystray.Menu(
+            pystray.MenuItem(
+                lambda item: self.engine.status.describe()[:MAXIMUM_MENU_STATUS_LENGTH],
+                None, enabled=False,
             ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Settings...", self._on_interface_thread(self.open_settings), default=True),
+            pystray.MenuItem(
+                lambda item: "Resume" if self.engine.paused else "Pause",
+                lambda: self.engine.set_paused(not self.engine.paused),
+            ),
+            pystray.MenuItem("Open folder", lambda: _open_with_windows(self.settings.watch_folder)),
+            pystray.MenuItem("Open log", lambda: _open_with_windows(str(log_file_path()))),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Exit", self._on_interface_thread(self.exit)),
         )
 
     def run(self) -> None:
         if self.first_run:
             self.settings.save()
-        try:
-            autostart.sync(self.settings.start_with_windows)
-        except OSError:
-            log.exception("Could not update the autostart entry")
+        self._synchronize_autostart()
         threading.Thread(target=self.icon.run, name="tray", daemon=True).start()
-        # Encoder test takes a moment; don't block the tray from appearing.
+        # The encoder test takes a moment; the tray icon should not wait for it.
         threading.Thread(target=self.engine.start, name="engine-start", daemon=True).start()
-        self.root.after(100, self._pump)
+        self.root.after(QUEUE_CHECK_MILLISECONDS, self._run_queued_interface_calls)
         self.root.mainloop()
 
-    # ---- thread hand-off ---------------------------------------------------
+    def _synchronize_autostart(self) -> bool:
+        try:
+            autostart.synchronize(self.settings.start_with_windows)
+            return True
+        except OSError:
+            logger.exception("Could not update the autostart entry")
+            return False
 
-    def _ui(self, fn):
-        """Wrap a menu callback so it runs on the tk thread."""
-        return lambda *args: self.calls.put(fn)
+    # ---- thread hand-over ---------------------------------------------------
 
-    def _pump(self) -> None:
+    def _on_interface_thread(self, action: Callable[[], None]) -> Callable[..., None]:
+        """Wrap a menu callback so it runs on the tkinter thread."""
+        return lambda *menu_arguments: self.interface_calls.put(action)
+
+    def _run_queued_interface_calls(self) -> None:
         while True:
             try:
-                fn = self.calls.get_nowait()
+                action = self.interface_calls.get_nowait()
             except queue.Empty:
                 break
             try:
-                fn()
+                action()
             except Exception:
-                log.exception("UI action failed")
-        self.root.after(100, self._pump)
+                logger.exception("Interface action failed")
+        self.root.after(QUEUE_CHECK_MILLISECONDS, self._run_queued_interface_calls)
 
     # ---- engine callbacks (worker thread) ----------------------------------
 
-    def _on_status(self, status: Status) -> None:
-        self.icon.icon = make_icon(status.state)
-        self.icon.title = f"{APP_TITLE} - {status.text()}"[:127]
+    def _show_status(self, new_status: Status) -> None:
+        self.icon.icon = draw_tray_icon(new_status.state)
+        self.icon.title = f"{APPLICATION_TITLE} - {new_status.describe()}"[:MAXIMUM_TOOLTIP_LENGTH]
         self.icon.update_menu()
 
     def _notify(self, message: str) -> None:
-        log.info("Notification: %s", message)
+        logger.info("Notification: %s", message)
         try:
-            self.icon.notify(message[:250], APP_TITLE)
+            self.icon.notify(message[:MAXIMUM_NOTIFICATION_LENGTH], APPLICATION_TITLE)
         except Exception:
-            log.exception("Could not show a notification")
+            logger.exception("Could not show a notification")
 
-    # ---- actions (tk thread) -----------------------------------------------
+    # ---- actions (tkinter thread) -------------------------------------------
 
     def open_settings(self) -> None:
         if self.settings_window and self.settings_window.is_open():
-            self.settings_window.focus()
+            self.settings_window.bring_to_front()
             return
         self.settings_window = SettingsWindow(
-            self.root, self.settings, self.engine.encoder, self._save_settings
+            self.root, self.settings, self.engine.active_encoder, self._save_settings
         )
 
-    def _save_settings(self, new: Settings) -> None:
-        new.save()
-        self.settings = new
-        log.info("Settings saved: %s", new)
-        try:
-            autostart.sync(new.start_with_windows)
-        except OSError as e:
-            messagebox.showerror(APP_TITLE, f"Could not change autostart: {e}")
-        threading.Thread(target=self.engine.apply_settings, args=(new,), daemon=True).start()
+    def _save_settings(self, updated: Settings) -> None:
+        updated.save()
+        self.settings = updated
+        logger.info("Settings saved: %s", updated)
+        if not self._synchronize_autostart():
+            messagebox.showerror(APPLICATION_TITLE, "Could not change autostart, see the log.")
+        # Testing a new encoder takes a moment; keep the interface responsive.
+        threading.Thread(target=self.engine.apply_settings, args=(updated,), daemon=True).start()
 
     def exit(self) -> None:
-        log.info("Exiting")
+        logger.info("Exiting")
         self.icon.stop()
         self.engine.stop()
         self.root.quit()
 
 
-def _open(path: str) -> None:
+def _open_with_windows(path: str) -> None:
     try:
         os.startfile(path)
     except OSError:
-        log.exception("Could not open %s", path)
+        logger.exception("Could not open %s", path)
+
+
+def _make_process_dpi_aware() -> None:
+    """Without this tkinter looks blurry on scaled (HiDPI) screens."""
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(PROCESS_DPI_AWARE)
+    except (AttributeError, OSError):
+        pass
 
 
 def run_tray(settings: Settings, first_run: bool) -> None:
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # crisp tkinter on HiDPI screens
-    except (AttributeError, OSError):
-        pass
-    if _already_running():
-        root = tk.Tk()
+    _make_process_dpi_aware()
+    if single_instance.another_instance_is_running():
+        root = tkinter.Tk()
         root.withdraw()
-        messagebox.showinfo(APP_TITLE, "Capture Compressor is already running (see the tray).")
+        messagebox.showinfo(APPLICATION_TITLE, "Capture Compressor is already running (see the tray).")
         return
-    TrayApp(settings, first_run).run()
+    TrayApplication(settings, first_run).run()
