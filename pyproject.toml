@@ -1,0 +1,29 @@
+[project]
+name = "capture-compressor"
+version = "0.1.0"
+description = "Windows tray app that automatically compresses new screen recordings with ffmpeg"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "pystray>=0.19",
+    "Pillow>=10",
+    "watchdog>=4",
+    "Send2Trash>=1.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.gui-scripts]
+capture-compressor = "capture_compressor.__main__:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["capture_compressor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
