@@ -1,6 +1,6 @@
 [project]
 name = "capture-compressor"
-version = "1.0.0"
+version = "1.1.0"
 description = "Windows tray app that automatically compresses new screen recordings with ffmpeg"
 readme = "README.md"
 license = "MIT"
